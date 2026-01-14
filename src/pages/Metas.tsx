@@ -1,8 +1,12 @@
+import { useAuth } from "@/hooks/useAuth";
 import { AppLayout } from "@/components/AppLayout";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
+import { Skeleton } from "@/components/ui/skeleton";
+import { GoalDialog } from "@/components/dialogs/GoalDialog";
+import { DeleteDialog } from "@/components/dialogs/DeleteDialog";
 import { 
   Plus, 
   Target, 
@@ -11,7 +15,9 @@ import {
   CheckCircle2,
   Circle,
   Clock,
-  Flag
+  Flag,
+  Pencil,
+  Trash2
 } from "lucide-react";
 import {
   DropdownMenu,
@@ -19,95 +25,157 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { useState } from "react";
+import { supabase } from "@/integrations/supabase/client";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useToast } from "@/hooks/use-toast";
+import { format } from "date-fns";
+import { ptBR } from "date-fns/locale";
 
-interface Meta {
+type GoalStatus = "not_started" | "in_progress" | "finishing" | "completed";
+
+interface Goal {
   id: string;
-  titulo: string;
-  descricao: string;
-  dataInicio: string;
-  prazoFinal: string;
-  status: "nao_iniciada" | "em_andamento" | "finalizando" | "concluida";
-  progresso: number;
+  title: string;
+  description: string | null;
+  start_date: string;
+  due_date: string;
+  status: GoalStatus;
+  progress: number;
+  created_by: string;
+  created_at: string;
+  updated_at: string;
 }
 
 export default function Metas() {
-  // Dados mockados
-  const metas: Meta[] = [
-    {
-      id: "1",
-      titulo: "Campanha de Marketing Digital",
-      descricao: "Criar e lançar campanha de marketing para o Q1 2026",
-      dataInicio: "05/01/2026",
-      prazoFinal: "28/02/2026",
-      status: "em_andamento",
-      progresso: 45,
-    },
-    {
-      id: "2",
-      titulo: "Redesign do Site",
-      descricao: "Atualizar layout e UX do site principal",
-      dataInicio: "01/01/2026",
-      prazoFinal: "15/01/2026",
-      status: "finalizando",
-      progresso: 85,
-    },
-    {
-      id: "3",
-      titulo: "Newsletter Semanal",
-      descricao: "Implementar sistema de newsletter automatizada",
-      dataInicio: "10/01/2026",
-      prazoFinal: "20/01/2026",
-      status: "nao_iniciada",
-      progresso: 0,
-    },
-    {
-      id: "4",
-      titulo: "Análise de Concorrência",
-      descricao: "Pesquisa e análise detalhada dos principais concorrentes",
-      dataInicio: "02/01/2026",
-      prazoFinal: "10/01/2026",
-      status: "concluida",
-      progresso: 100,
-    },
-  ];
+  const { user, loading: authLoading } = useAuth();
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [selectedGoal, setSelectedGoal] = useState<Goal | null>(null);
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
 
-  const getStatusConfig = (status: Meta["status"]) => {
+  const { data: goals = [], isLoading } = useQuery({
+    queryKey: ["goals"],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("goals")
+        .select("*")
+        .order("due_date", { ascending: true });
+      if (error) throw error;
+      return data as Goal[];
+    },
+    enabled: !!user,
+  });
+
+  const createMutation = useMutation({
+    mutationFn: async (goal: Omit<Goal, "id" | "created_by" | "created_at" | "updated_at">) => {
+      const { error } = await supabase.from("goals").insert({
+        ...goal,
+        created_by: user!.id,
+      });
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["goals"] });
+      setDialogOpen(false);
+      toast({ title: "Meta criada com sucesso!" });
+    },
+    onError: (error: any) => {
+      toast({ title: "Erro ao criar meta", description: error.message, variant: "destructive" });
+    },
+  });
+
+  const updateMutation = useMutation({
+    mutationFn: async ({ id, ...goal }: Partial<Goal> & { id: string }) => {
+      const { error } = await supabase
+        .from("goals")
+        .update(goal)
+        .eq("id", id);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["goals"] });
+      setDialogOpen(false);
+      setSelectedGoal(null);
+      toast({ title: "Meta atualizada com sucesso!" });
+    },
+    onError: (error: any) => {
+      toast({ title: "Erro ao atualizar meta", description: error.message, variant: "destructive" });
+    },
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: async (id: string) => {
+      const { error } = await supabase.from("goals").delete().eq("id", id);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["goals"] });
+      setDeleteDialogOpen(false);
+      setSelectedGoal(null);
+      toast({ title: "Meta removida com sucesso!" });
+    },
+    onError: (error: any) => {
+      toast({ title: "Erro ao remover meta", description: error.message, variant: "destructive" });
+    },
+  });
+
+  const handleSave = async (goalData: any) => {
+    if (selectedGoal) {
+      await updateMutation.mutateAsync({ id: selectedGoal.id, ...goalData });
+    } else {
+      await createMutation.mutateAsync(goalData);
+    }
+  };
+
+  const getStatusConfig = (status: GoalStatus) => {
     const configs = {
-      nao_iniciada: {
+      not_started: {
         icon: Circle,
         label: "Não iniciada",
         className: "bg-status-not-started/10 text-status-not-started border-status-not-started/20",
-        progressColor: "bg-status-not-started",
       },
-      em_andamento: {
+      in_progress: {
         icon: Clock,
         label: "Em andamento",
         className: "bg-status-in-progress/10 text-status-in-progress border-status-in-progress/20",
-        progressColor: "bg-status-in-progress",
       },
-      finalizando: {
+      finishing: {
         icon: Flag,
         label: "Finalizando",
         className: "bg-warning/10 text-warning border-warning/20",
-        progressColor: "bg-warning",
       },
-      concluida: {
+      completed: {
         icon: CheckCircle2,
         label: "Concluída",
         className: "bg-status-done/10 text-status-done border-status-done/20",
-        progressColor: "bg-status-done",
       },
     };
     return configs[status];
   };
 
   const stats = {
-    total: metas.length,
-    naoIniciadas: metas.filter((m) => m.status === "nao_iniciada").length,
-    emAndamento: metas.filter((m) => m.status === "em_andamento").length,
-    finalizando: metas.filter((m) => m.status === "finalizando").length,
-    concluidas: metas.filter((m) => m.status === "concluida").length,
+    total: goals.length,
+    notStarted: goals.filter((g) => g.status === "not_started").length,
+    inProgress: goals.filter((g) => g.status === "in_progress").length,
+    finishing: goals.filter((g) => g.status === "finishing").length,
+    completed: goals.filter((g) => g.status === "completed").length,
   };
+
+  const formatDate = (date: string) => {
+    return format(new Date(date), "dd/MM/yyyy", { locale: ptBR });
+  };
+
+  if (authLoading) {
+    return (
+      <AppLayout>
+        <div className="p-8">
+          <Skeleton className="h-10 w-48 mb-8" />
+        </div>
+      </AppLayout>
+    );
+  }
 
   return (
     <AppLayout>
@@ -122,7 +190,13 @@ export default function Metas() {
               Organize suas ideias, projetos e objetivos
             </p>
           </div>
-          <Button className="gradient-brand hover:opacity-90 transition-opacity">
+          <Button 
+            className="gradient-brand hover:opacity-90 transition-opacity"
+            onClick={() => {
+              setSelectedGoal(null);
+              setDialogOpen(true);
+            }}
+          >
             <Plus className="h-4 w-4 mr-2" />
             Nova Meta
           </Button>
@@ -137,100 +211,152 @@ export default function Metas() {
           <Card className="p-4">
             <p className="text-sm text-status-not-started">Não iniciadas</p>
             <p className="text-2xl font-display font-bold text-status-not-started">
-              {stats.naoIniciadas}
+              {stats.notStarted}
             </p>
           </Card>
           <Card className="p-4">
             <p className="text-sm text-status-in-progress">Em andamento</p>
             <p className="text-2xl font-display font-bold text-status-in-progress">
-              {stats.emAndamento}
+              {stats.inProgress}
             </p>
           </Card>
           <Card className="p-4">
             <p className="text-sm text-warning">Finalizando</p>
             <p className="text-2xl font-display font-bold text-warning">
-              {stats.finalizando}
+              {stats.finishing}
             </p>
           </Card>
           <Card className="p-4">
             <p className="text-sm text-status-done">Concluídas</p>
             <p className="text-2xl font-display font-bold text-status-done">
-              {stats.concluidas}
+              {stats.completed}
             </p>
           </Card>
         </div>
 
         {/* Goals Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          {metas.map((meta) => {
-            const statusConfig = getStatusConfig(meta.status);
-            const StatusIcon = statusConfig.icon;
+        {isLoading ? (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            {[1, 2, 3, 4].map((i) => (
+              <Skeleton key={i} className="h-48" />
+            ))}
+          </div>
+        ) : goals.length === 0 ? (
+          <Card className="p-8 text-center">
+            <Target className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
+            <p className="text-muted-foreground">Nenhuma meta cadastrada</p>
+            <Button 
+              className="mt-4 gradient-brand"
+              onClick={() => setDialogOpen(true)}
+            >
+              <Plus className="h-4 w-4 mr-2" />
+              Criar primeira meta
+            </Button>
+          </Card>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            {goals.map((goal) => {
+              const statusConfig = getStatusConfig(goal.status);
+              const StatusIcon = statusConfig.icon;
 
-            return (
-              <Card key={meta.id} className="animate-slide-up hover:shadow-lg transition-shadow">
-                <CardHeader className="pb-3">
-                  <div className="flex items-start justify-between">
-                    <div className="flex items-start gap-3">
-                      <div className="h-10 w-10 rounded-lg bg-primary/10 flex items-center justify-center mt-1">
-                        <Target className="h-5 w-5 text-primary" />
+              return (
+                <Card key={goal.id} className="animate-slide-up hover:shadow-lg transition-shadow">
+                  <CardHeader className="pb-3">
+                    <div className="flex items-start justify-between">
+                      <div className="flex items-start gap-3">
+                        <div className="h-10 w-10 rounded-lg bg-primary/10 flex items-center justify-center mt-1">
+                          <Target className="h-5 w-5 text-primary" />
+                        </div>
+                        <div>
+                          <CardTitle className="text-lg font-display">
+                            {goal.title}
+                          </CardTitle>
+                          <p className="text-sm text-muted-foreground mt-1">
+                            {goal.description || "Sem descrição"}
+                          </p>
+                        </div>
                       </div>
-                      <div>
-                        <CardTitle className="text-lg font-display">
-                          {meta.titulo}
-                        </CardTitle>
-                        <p className="text-sm text-muted-foreground mt-1">
-                          {meta.descricao}
-                        </p>
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button variant="ghost" size="icon">
+                            <MoreVertical className="h-4 w-4" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end">
+                          <DropdownMenuItem
+                            onClick={() => {
+                              setSelectedGoal(goal);
+                              setDialogOpen(true);
+                            }}
+                          >
+                            <Pencil className="h-4 w-4 mr-2" />
+                            Editar
+                          </DropdownMenuItem>
+                          <DropdownMenuItem
+                            className="text-destructive"
+                            onClick={() => {
+                              setSelectedGoal(goal);
+                              setDeleteDialogOpen(true);
+                            }}
+                          >
+                            <Trash2 className="h-4 w-4 mr-2" />
+                            Excluir
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    </div>
+                  </CardHeader>
+                  <CardContent>
+                    {/* Progress */}
+                    <div className="mb-4">
+                      <div className="flex items-center justify-between text-sm mb-2">
+                        <span className="text-muted-foreground">Progresso</span>
+                        <span className="font-medium">{goal.progress}%</span>
                       </div>
+                      <Progress value={goal.progress} className="h-2" />
                     </div>
-                    <DropdownMenu>
-                      <DropdownMenuTrigger asChild>
-                        <Button variant="ghost" size="icon">
-                          <MoreVertical className="h-4 w-4" />
-                        </Button>
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end">
-                        <DropdownMenuItem>Editar</DropdownMenuItem>
-                        <DropdownMenuItem>Alterar Status</DropdownMenuItem>
-                        <DropdownMenuItem className="text-destructive">
-                          Excluir
-                        </DropdownMenuItem>
-                      </DropdownMenuContent>
-                    </DropdownMenu>
-                  </div>
-                </CardHeader>
-                <CardContent>
-                  {/* Progress */}
-                  <div className="mb-4">
-                    <div className="flex items-center justify-between text-sm mb-2">
-                      <span className="text-muted-foreground">Progresso</span>
-                      <span className="font-medium">{meta.progresso}%</span>
-                    </div>
-                    <Progress value={meta.progresso} className="h-2" />
-                  </div>
 
-                  {/* Dates and Status */}
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-4 text-xs text-muted-foreground">
-                      <div className="flex items-center gap-1">
-                        <Calendar className="h-3 w-3" />
-                        <span>Início: {meta.dataInicio}</span>
+                    {/* Dates and Status */}
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-4 text-xs text-muted-foreground">
+                        <div className="flex items-center gap-1">
+                          <Calendar className="h-3 w-3" />
+                          <span>Início: {formatDate(goal.start_date)}</span>
+                        </div>
+                        <div className="flex items-center gap-1">
+                          <Flag className="h-3 w-3" />
+                          <span>Prazo: {formatDate(goal.due_date)}</span>
+                        </div>
                       </div>
-                      <div className="flex items-center gap-1">
-                        <Flag className="h-3 w-3" />
-                        <span>Prazo: {meta.prazoFinal}</span>
-                      </div>
+                      <Badge variant="outline" className={statusConfig.className}>
+                        <StatusIcon className="h-3 w-3 mr-1" />
+                        {statusConfig.label}
+                      </Badge>
                     </div>
-                    <Badge variant="outline" className={statusConfig.className}>
-                      <StatusIcon className="h-3 w-3 mr-1" />
-                      {statusConfig.label}
-                    </Badge>
-                  </div>
-                </CardContent>
-              </Card>
-            );
-          })}
-        </div>
+                  </CardContent>
+                </Card>
+              );
+            })}
+          </div>
+        )}
+
+        {/* Dialogs */}
+        <GoalDialog
+          open={dialogOpen}
+          onOpenChange={setDialogOpen}
+          goal={selectedGoal}
+          onSave={handleSave}
+          loading={createMutation.isPending || updateMutation.isPending}
+        />
+
+        <DeleteDialog
+          open={deleteDialogOpen}
+          onOpenChange={setDeleteDialogOpen}
+          onConfirm={() => deleteMutation.mutateAsync(selectedGoal!.id)}
+          title="Excluir Meta"
+          description={`Tem certeza que deseja excluir "${selectedGoal?.title}"? Esta ação não pode ser desfeita.`}
+          loading={deleteMutation.isPending}
+        />
       </div>
     </AppLayout>
   );

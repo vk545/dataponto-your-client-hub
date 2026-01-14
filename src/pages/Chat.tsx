@@ -1,67 +1,145 @@
+import { useAuth } from "@/hooks/useAuth";
 import { AppLayout } from "@/components/AppLayout";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Send, Smile } from "lucide-react";
-import { useState } from "react";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Send, MessageCircle } from "lucide-react";
+import { useState, useEffect, useRef } from "react";
+import { supabase } from "@/integrations/supabase/client";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useToast } from "@/hooks/use-toast";
+import { format } from "date-fns";
+import { ptBR } from "date-fns/locale";
 
 interface Message {
   id: string;
   content: string;
-  sender: "me" | "other";
-  timestamp: string;
-  senderName: string;
+  sender_id: string;
+  created_at: string;
+}
+
+interface Profile {
+  id: string;
+  user_id: string;
+  display_name: string | null;
 }
 
 export default function Chat() {
+  const { user, loading: authLoading } = useAuth();
   const [newMessage, setNewMessage] = useState("");
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
 
-  // Dados mockados
-  const messages: Message[] = [
-    {
-      id: "1",
-      content: "Oi! Você viu os e-mails pendentes de hoje?",
-      sender: "other",
-      timestamp: "09:30",
-      senderName: "Colega",
+  const { data: messages = [], isLoading: messagesLoading } = useQuery({
+    queryKey: ["messages"],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("messages")
+        .select("*")
+        .order("created_at", { ascending: true });
+      if (error) throw error;
+      return data as Message[];
     },
-    {
-      id: "2",
-      content: "Vi sim! Já mandei para o João e a Maria. Falta o Pedro ainda.",
-      sender: "me",
-      timestamp: "09:32",
-      senderName: "Eu",
-    },
-    {
-      id: "3",
-      content: "Ótimo! E sobre a meta do redesign, como está o progresso?",
-      sender: "other",
-      timestamp: "09:35",
-      senderName: "Colega",
-    },
-    {
-      id: "4",
-      content: "Estamos em 85%, deve finalizar até amanhã! 🎉",
-      sender: "me",
-      timestamp: "09:36",
-      senderName: "Eu",
-    },
-    {
-      id: "5",
-      content: "Perfeito! Lembra de atualizar o status depois.",
-      sender: "other",
-      timestamp: "09:38",
-      senderName: "Colega",
-    },
-  ];
+    enabled: !!user,
+  });
 
-  const handleSendMessage = (e: React.FormEvent) => {
+  const { data: profiles = [] } = useQuery({
+    queryKey: ["profiles"],
+    queryFn: async () => {
+      const { data, error } = await supabase.from("profiles").select("*");
+      if (error) throw error;
+      return data as Profile[];
+    },
+    enabled: !!user,
+  });
+
+  // Realtime subscription
+  useEffect(() => {
+    if (!user) return;
+
+    const channel = supabase
+      .channel("messages-realtime")
+      .on(
+        "postgres_changes",
+        {
+          event: "INSERT",
+          schema: "public",
+          table: "messages",
+        },
+        (payload) => {
+          queryClient.setQueryData<Message[]>(["messages"], (old = []) => {
+            const exists = old.some((m) => m.id === payload.new.id);
+            if (exists) return old;
+            return [...old, payload.new as Message];
+          });
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [user, queryClient]);
+
+  // Auto scroll to bottom
+  useEffect(() => {
+    if (scrollRef.current) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    }
+  }, [messages]);
+
+  const sendMutation = useMutation({
+    mutationFn: async (content: string) => {
+      const { error } = await supabase.from("messages").insert({
+        content,
+        sender_id: user!.id,
+      });
+      if (error) throw error;
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Erro ao enviar mensagem",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
+  const handleSendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newMessage.trim()) return;
-    // Aqui virá a lógica de envio
+    
+    const message = newMessage;
     setNewMessage("");
+    await sendMutation.mutateAsync(message);
   };
+
+  const getProfile = (userId: string) => {
+    return profiles.find((p) => p.user_id === userId);
+  };
+
+  const formatTime = (date: string) => {
+    return format(new Date(date), "HH:mm", { locale: ptBR });
+  };
+
+  const getOtherUser = () => {
+    const otherProfile = profiles.find((p) => p.user_id !== user?.id);
+    return otherProfile?.display_name || "Colega";
+  };
+
+  if (authLoading) {
+    return (
+      <AppLayout>
+        <div className="h-[calc(100vh-2rem)] p-8 flex flex-col">
+          <Skeleton className="h-10 w-48 mb-6" />
+          <Skeleton className="flex-1" />
+        </div>
+      </AppLayout>
+    );
+  }
 
   return (
     <AppLayout>
@@ -81,63 +159,85 @@ export default function Chat() {
           {/* Chat Header */}
           <div className="p-4 border-b flex items-center gap-3">
             <div className="h-10 w-10 rounded-full gradient-brand flex items-center justify-center text-white font-semibold">
-              C
+              {getOtherUser().charAt(0).toUpperCase()}
             </div>
             <div>
-              <p className="font-medium">Colega</p>
+              <p className="font-medium">{getOtherUser()}</p>
               <p className="text-xs text-success flex items-center gap-1">
                 <span className="h-2 w-2 rounded-full bg-success"></span>
-                Online
+                Chat ativo
               </p>
             </div>
           </div>
 
           {/* Messages */}
-          <ScrollArea className="flex-1 p-4">
-            <div className="space-y-4">
-              {messages.map((message) => (
-                <div
-                  key={message.id}
-                  className={`flex ${message.sender === "me" ? "justify-end" : "justify-start"}`}
-                >
-                  <div
-                    className={`max-w-[70%] rounded-2xl px-4 py-3 animate-scale-in ${
-                      message.sender === "me"
-                        ? "gradient-brand text-white rounded-br-md"
-                        : "bg-muted text-foreground rounded-bl-md"
-                    }`}
-                  >
-                    <p className="text-sm">{message.content}</p>
-                    <p
-                      className={`text-xs mt-1 ${
-                        message.sender === "me" ? "text-white/70" : "text-muted-foreground"
-                      }`}
+          <ScrollArea className="flex-1 p-4" ref={scrollRef}>
+            {messagesLoading ? (
+              <div className="space-y-4">
+                {[1, 2, 3].map((i) => (
+                  <Skeleton key={i} className="h-16 w-3/4" />
+                ))}
+              </div>
+            ) : messages.length === 0 ? (
+              <div className="flex flex-col items-center justify-center h-full text-muted-foreground">
+                <MessageCircle className="h-12 w-12 mb-4" />
+                <p>Nenhuma mensagem ainda</p>
+                <p className="text-sm">Comece uma conversa!</p>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {messages.map((message) => {
+                  const isMe = message.sender_id === user?.id;
+                  const profile = getProfile(message.sender_id);
+
+                  return (
+                    <div
+                      key={message.id}
+                      className={`flex ${isMe ? "justify-end" : "justify-start"}`}
                     >
-                      {message.timestamp}
-                    </p>
-                  </div>
-                </div>
-              ))}
-            </div>
+                      <div
+                        className={`max-w-[70%] rounded-2xl px-4 py-3 animate-scale-in ${
+                          isMe
+                            ? "gradient-brand text-white rounded-br-md"
+                            : "bg-muted text-foreground rounded-bl-md"
+                        }`}
+                      >
+                        {!isMe && (
+                          <p className="text-xs font-medium mb-1 opacity-70">
+                            {profile?.display_name || "Usuário"}
+                          </p>
+                        )}
+                        <p className="text-sm">{message.content}</p>
+                        <p
+                          className={`text-xs mt-1 ${
+                            isMe ? "text-white/70" : "text-muted-foreground"
+                          }`}
+                        >
+                          {formatTime(message.created_at)}
+                        </p>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </ScrollArea>
 
           {/* Message Input */}
           <form onSubmit={handleSendMessage} className="p-4 border-t">
             <div className="flex items-center gap-2">
-              <Button type="button" variant="ghost" size="icon" className="text-muted-foreground">
-                <Smile className="h-5 w-5" />
-              </Button>
               <Input
                 placeholder="Digite sua mensagem..."
                 value={newMessage}
                 onChange={(e) => setNewMessage(e.target.value)}
                 className="flex-1"
+                disabled={sendMutation.isPending}
               />
               <Button
                 type="submit"
                 size="icon"
                 className="gradient-brand hover:opacity-90 transition-opacity"
-                disabled={!newMessage.trim()}
+                disabled={!newMessage.trim() || sendMutation.isPending}
               >
                 <Send className="h-4 w-4" />
               </Button>

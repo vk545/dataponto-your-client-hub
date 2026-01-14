@@ -1,8 +1,12 @@
+import { useAuth } from "@/hooks/useAuth";
 import { AppLayout } from "@/components/AppLayout";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
+import { Skeleton } from "@/components/ui/skeleton";
+import { ClientDialog } from "@/components/dialogs/ClientDialog";
+import { DeleteDialog } from "@/components/dialogs/DeleteDialog";
 import { 
   Plus, 
   Search, 
@@ -11,7 +15,9 @@ import {
   XCircle, 
   Clock,
   MoreVertical,
-  Calendar
+  Calendar,
+  Pencil,
+  Trash2
 } from "lucide-react";
 import {
   DropdownMenu,
@@ -20,71 +26,137 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useState } from "react";
+import { supabase } from "@/integrations/supabase/client";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useToast } from "@/hooks/use-toast";
+import { format, addDays } from "date-fns";
+import { ptBR } from "date-fns/locale";
 
-interface Cliente {
+type EmailStatus = "accepted" | "rejected" | "pending";
+
+interface Client {
   id: string;
-  nome: string;
+  name: string;
   email: string;
-  dataEntrada: string;
-  statusEmail: "aceito" | "recusado" | "pendente";
-  ultimoContato?: string;
-  proximoLembrete?: string;
+  entry_date: string;
+  email_status: EmailStatus;
+  last_contact: string | null;
+  next_reminder: string | null;
+  reminder_days: number;
+  notes: string | null;
+  created_by: string;
+  created_at: string;
+  updated_at: string;
 }
 
 export default function Emails() {
+  const { user, loading: authLoading } = useAuth();
   const [searchTerm, setSearchTerm] = useState("");
-  
-  // Dados mockados
-  const clientes: Cliente[] = [
-    {
-      id: "1",
-      nome: "João Silva",
-      email: "joao.silva@email.com",
-      dataEntrada: "10/01/2026",
-      statusEmail: "aceito",
-      ultimoContato: "12/01/2026",
-      proximoLembrete: "19/01/2026",
-    },
-    {
-      id: "2",
-      nome: "Maria Santos",
-      email: "maria.santos@email.com",
-      dataEntrada: "08/01/2026",
-      statusEmail: "pendente",
-      ultimoContato: "08/01/2026",
-    },
-    {
-      id: "3",
-      nome: "Pedro Costa",
-      email: "pedro.costa@email.com",
-      dataEntrada: "05/01/2026",
-      statusEmail: "recusado",
-      ultimoContato: "07/01/2026",
-    },
-    {
-      id: "4",
-      nome: "Ana Oliveira",
-      email: "ana.oliveira@email.com",
-      dataEntrada: "03/01/2026",
-      statusEmail: "aceito",
-      ultimoContato: "10/01/2026",
-      proximoLembrete: "17/01/2026",
-    },
-  ];
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [selectedClient, setSelectedClient] = useState<Client | null>(null);
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
 
-  const getStatusBadge = (status: Cliente["statusEmail"]) => {
+  const { data: clients = [], isLoading } = useQuery({
+    queryKey: ["clients"],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("clients")
+        .select("*")
+        .order("created_at", { ascending: false });
+      if (error) throw error;
+      return data as Client[];
+    },
+    enabled: !!user,
+  });
+
+  const createMutation = useMutation({
+    mutationFn: async (client: Omit<Client, "id" | "created_by" | "created_at" | "updated_at" | "entry_date" | "last_contact" | "next_reminder">) => {
+      const today = new Date();
+      const nextReminder = addDays(today, client.reminder_days);
+      
+      const { error } = await supabase.from("clients").insert({
+        ...client,
+        created_by: user!.id,
+        entry_date: format(today, "yyyy-MM-dd"),
+        last_contact: format(today, "yyyy-MM-dd"),
+        next_reminder: format(nextReminder, "yyyy-MM-dd"),
+      });
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["clients"] });
+      setDialogOpen(false);
+      toast({ title: "Cliente criado com sucesso!" });
+    },
+    onError: (error: any) => {
+      toast({ title: "Erro ao criar cliente", description: error.message, variant: "destructive" });
+    },
+  });
+
+  const updateMutation = useMutation({
+    mutationFn: async ({ id, ...client }: Partial<Client> & { id: string }) => {
+      const updates: any = { ...client };
+      if (client.reminder_days) {
+        const today = new Date();
+        updates.next_reminder = format(addDays(today, client.reminder_days), "yyyy-MM-dd");
+      }
+      
+      const { error } = await supabase
+        .from("clients")
+        .update(updates)
+        .eq("id", id);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["clients"] });
+      setDialogOpen(false);
+      setSelectedClient(null);
+      toast({ title: "Cliente atualizado com sucesso!" });
+    },
+    onError: (error: any) => {
+      toast({ title: "Erro ao atualizar cliente", description: error.message, variant: "destructive" });
+    },
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: async (id: string) => {
+      const { error } = await supabase.from("clients").delete().eq("id", id);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["clients"] });
+      setDeleteDialogOpen(false);
+      setSelectedClient(null);
+      toast({ title: "Cliente removido com sucesso!" });
+    },
+    onError: (error: any) => {
+      toast({ title: "Erro ao remover cliente", description: error.message, variant: "destructive" });
+    },
+  });
+
+  const handleSave = async (clientData: any) => {
+    if (selectedClient) {
+      await updateMutation.mutateAsync({ id: selectedClient.id, ...clientData });
+    } else {
+      await createMutation.mutateAsync(clientData);
+    }
+  };
+
+  const getStatusBadge = (status: EmailStatus) => {
     const configs = {
-      aceito: {
+      accepted: {
         icon: CheckCircle,
         label: "Aceito",
         className: "bg-success/10 text-success border-success/20",
       },
-      recusado: {
+      rejected: {
         icon: XCircle,
         label: "Recusado",
         className: "bg-destructive/10 text-destructive border-destructive/20",
       },
-      pendente: {
+      pending: {
         icon: Clock,
         label: "Pendente",
         className: "bg-warning/10 text-warning border-warning/20",
@@ -102,18 +174,33 @@ export default function Emails() {
     );
   };
 
-  const filteredClientes = clientes.filter(
-    (cliente) =>
-      cliente.nome.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      cliente.email.toLowerCase().includes(searchTerm.toLowerCase())
+  const filteredClients = clients.filter(
+    (client) =>
+      client.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      client.email.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
   const stats = {
-    total: clientes.length,
-    aceitos: clientes.filter((c) => c.statusEmail === "aceito").length,
-    pendentes: clientes.filter((c) => c.statusEmail === "pendente").length,
-    recusados: clientes.filter((c) => c.statusEmail === "recusado").length,
+    total: clients.length,
+    accepted: clients.filter((c) => c.email_status === "accepted").length,
+    pending: clients.filter((c) => c.email_status === "pending").length,
+    rejected: clients.filter((c) => c.email_status === "rejected").length,
   };
+
+  const formatDate = (date: string | null) => {
+    if (!date) return "-";
+    return format(new Date(date), "dd/MM/yyyy", { locale: ptBR });
+  };
+
+  if (authLoading) {
+    return (
+      <AppLayout>
+        <div className="p-8">
+          <Skeleton className="h-10 w-48 mb-8" />
+        </div>
+      </AppLayout>
+    );
+  }
 
   return (
     <AppLayout>
@@ -128,7 +215,13 @@ export default function Emails() {
               Gerencie seus clientes e lembretes de e-mail
             </p>
           </div>
-          <Button className="gradient-brand hover:opacity-90 transition-opacity">
+          <Button 
+            className="gradient-brand hover:opacity-90 transition-opacity"
+            onClick={() => {
+              setSelectedClient(null);
+              setDialogOpen(true);
+            }}
+          >
             <Plus className="h-4 w-4 mr-2" />
             Novo Cliente
           </Button>
@@ -142,15 +235,15 @@ export default function Emails() {
           </Card>
           <Card className="p-4 bg-success/5 border-success/20">
             <p className="text-sm text-success">Aceitos</p>
-            <p className="text-2xl font-display font-bold text-success">{stats.aceitos}</p>
+            <p className="text-2xl font-display font-bold text-success">{stats.accepted}</p>
           </Card>
           <Card className="p-4 bg-warning/5 border-warning/20">
             <p className="text-sm text-warning">Pendentes</p>
-            <p className="text-2xl font-display font-bold text-warning">{stats.pendentes}</p>
+            <p className="text-2xl font-display font-bold text-warning">{stats.pending}</p>
           </Card>
           <Card className="p-4 bg-destructive/5 border-destructive/20">
             <p className="text-sm text-destructive">Recusados</p>
-            <p className="text-2xl font-display font-bold text-destructive">{stats.recusados}</p>
+            <p className="text-2xl font-display font-bold text-destructive">{stats.rejected}</p>
           </Card>
         </div>
 
@@ -173,58 +266,100 @@ export default function Emails() {
             <CardTitle className="text-lg font-display">Lista de Clientes</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="space-y-3">
-              {filteredClientes.map((cliente) => (
-                <div
-                  key={cliente.id}
-                  className="flex items-center justify-between p-4 rounded-lg bg-muted/30 hover:bg-muted/50 transition-colors animate-fade-in"
-                >
-                  <div className="flex items-center gap-4">
-                    <div className="h-12 w-12 rounded-full gradient-brand flex items-center justify-center text-white font-semibold">
-                      {cliente.nome.charAt(0)}
-                    </div>
-                    <div>
-                      <p className="font-medium text-foreground">{cliente.nome}</p>
-                      <p className="text-sm text-muted-foreground">{cliente.email}</p>
-                      <div className="flex items-center gap-2 mt-1 text-xs text-muted-foreground">
-                        <Calendar className="h-3 w-3" />
-                        <span>Entrada: {cliente.dataEntrada}</span>
-                        {cliente.proximoLembrete && (
-                          <>
-                            <span className="mx-1">•</span>
-                            <Clock className="h-3 w-3 text-warning" />
-                            <span className="text-warning">Lembrete: {cliente.proximoLembrete}</span>
-                          </>
-                        )}
+            {isLoading ? (
+              <div className="space-y-3">
+                {[1, 2, 3].map((i) => (
+                  <Skeleton key={i} className="h-20" />
+                ))}
+              </div>
+            ) : filteredClients.length === 0 ? (
+              <p className="text-muted-foreground text-center py-8">
+                {searchTerm ? "Nenhum cliente encontrado" : "Nenhum cliente cadastrado"}
+              </p>
+            ) : (
+              <div className="space-y-3">
+                {filteredClients.map((client) => (
+                  <div
+                    key={client.id}
+                    className="flex items-center justify-between p-4 rounded-lg bg-muted/30 hover:bg-muted/50 transition-colors animate-fade-in"
+                  >
+                    <div className="flex items-center gap-4">
+                      <div className="h-12 w-12 rounded-full gradient-brand flex items-center justify-center text-white font-semibold">
+                        {client.name.charAt(0).toUpperCase()}
+                      </div>
+                      <div>
+                        <p className="font-medium text-foreground">{client.name}</p>
+                        <p className="text-sm text-muted-foreground">{client.email}</p>
+                        <div className="flex items-center gap-2 mt-1 text-xs text-muted-foreground">
+                          <Calendar className="h-3 w-3" />
+                          <span>Entrada: {formatDate(client.entry_date)}</span>
+                          {client.next_reminder && (
+                            <>
+                              <span className="mx-1">•</span>
+                              <Clock className="h-3 w-3 text-warning" />
+                              <span className="text-warning">
+                                Lembrete: {formatDate(client.next_reminder)}
+                              </span>
+                            </>
+                          )}
+                        </div>
                       </div>
                     </div>
+                    <div className="flex items-center gap-3">
+                      {getStatusBadge(client.email_status)}
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button variant="ghost" size="icon">
+                            <MoreVertical className="h-4 w-4" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end">
+                          <DropdownMenuItem
+                            onClick={() => {
+                              setSelectedClient(client);
+                              setDialogOpen(true);
+                            }}
+                          >
+                            <Pencil className="h-4 w-4 mr-2" />
+                            Editar
+                          </DropdownMenuItem>
+                          <DropdownMenuItem
+                            className="text-destructive"
+                            onClick={() => {
+                              setSelectedClient(client);
+                              setDeleteDialogOpen(true);
+                            }}
+                          >
+                            <Trash2 className="h-4 w-4 mr-2" />
+                            Remover
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    </div>
                   </div>
-                  <div className="flex items-center gap-3">
-                    {getStatusBadge(cliente.statusEmail)}
-                    <DropdownMenu>
-                      <DropdownMenuTrigger asChild>
-                        <Button variant="ghost" size="icon">
-                          <MoreVertical className="h-4 w-4" />
-                        </Button>
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end">
-                        <DropdownMenuItem>
-                          <Mail className="h-4 w-4 mr-2" />
-                          Enviar E-mail
-                        </DropdownMenuItem>
-                        <DropdownMenuItem>Editar</DropdownMenuItem>
-                        <DropdownMenuItem>Definir Lembrete</DropdownMenuItem>
-                        <DropdownMenuItem className="text-destructive">
-                          Remover
-                        </DropdownMenuItem>
-                      </DropdownMenuContent>
-                    </DropdownMenu>
-                  </div>
-                </div>
-              ))}
-            </div>
+                ))}
+              </div>
+            )}
           </CardContent>
         </Card>
+
+        {/* Dialogs */}
+        <ClientDialog
+          open={dialogOpen}
+          onOpenChange={setDialogOpen}
+          client={selectedClient}
+          onSave={handleSave}
+          loading={createMutation.isPending || updateMutation.isPending}
+        />
+
+        <DeleteDialog
+          open={deleteDialogOpen}
+          onOpenChange={setDeleteDialogOpen}
+          onConfirm={() => deleteMutation.mutateAsync(selectedClient!.id)}
+          title="Remover Cliente"
+          description={`Tem certeza que deseja remover ${selectedClient?.name}? Esta ação não pode ser desfeita.`}
+          loading={deleteMutation.isPending}
+        />
       </div>
     </AppLayout>
   );
