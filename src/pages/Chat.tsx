@@ -121,6 +121,11 @@ export default function Chat() {
     return profiles.find((p) => p.user_id === userId);
   };
 
+  const getDisplayName = (userId: string) => {
+    const profile = getProfile(userId);
+    return profile?.display_name || "Usuário";
+  };
+
   const formatTime = (date: string) => {
     return format(new Date(date), "HH:mm", { locale: ptBR });
   };
@@ -204,7 +209,7 @@ export default function Chat() {
                       >
                         {!isMe && (
                           <p className="text-xs font-medium mb-1 opacity-70">
-                            {profile?.display_name || "Usuário"}
+                            {getDisplayName(message.sender_id)}
                           </p>
                         )}
                         <p className="text-sm">{message.content}</p>
