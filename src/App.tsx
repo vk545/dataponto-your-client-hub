@@ -10,6 +10,12 @@ import Metas from "./pages/Metas";
 import Chat from "./pages/Chat";
 import Configuracoes from "./pages/Configuracoes";
 import NotFound from "./pages/NotFound";
+import Notas from "./pages/Notas";
+import Projetos from "./pages/Projetos";
+import Cronograma from "./pages/Cronograma";
+import Agenda from "./pages/Agenda";
+import Arquivos from "./pages/Arquivos";
+import Prazos from "./pages/Prazos";
 
 const queryClient = new QueryClient();
 
@@ -27,6 +33,12 @@ const App = () => (
           <Route path="/metas" element={<Metas />} />
           <Route path="/chat" element={<Chat />} />
           <Route path="/configuracoes" element={<Configuracoes />} />
+          <Route path="/notas" element={<Notas />} />
+          <Route path="/projetos" element={<Projetos />} />
+          <Route path="/cronograma" element={<Cronograma />} />
+          <Route path="/agenda" element={<Agenda />} />
+          <Route path="/arquivos" element={<Arquivos />} />
+          <Route path="/prazos" element={<Prazos />} />
           <Route path="*" element={<NotFound />} />
         </Routes>
       </BrowserRouter>

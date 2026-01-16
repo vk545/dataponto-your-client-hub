@@ -7,7 +7,13 @@ import {
   LogOut,
   Settings,
   Menu,
-  X
+  X,
+  Lightbulb,
+  FolderKanban,
+  Calendar,
+  Clock,
+  FileText,
+  CalendarClock
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { supabase } from "@/integrations/supabase/client";
@@ -18,6 +24,12 @@ import { useState, useEffect } from "react";
 
 const navItems = [
   { icon: LayoutDashboard, label: "Dashboard", path: "/dashboard" },
+  { icon: Lightbulb, label: "Notas", path: "/notas" },
+  { icon: FolderKanban, label: "Projetos", path: "/projetos" },
+  { icon: Calendar, label: "Agenda", path: "/agenda" },
+  { icon: CalendarClock, label: "Cronograma", path: "/cronograma" },
+  { icon: Clock, label: "Prazos", path: "/prazos" },
+  { icon: FileText, label: "Arquivos", path: "/arquivos" },
   { icon: Mail, label: "E-mails", path: "/emails" },
   { icon: Target, label: "Metas", path: "/metas" },
   { icon: MessageCircle, label: "Chat", path: "/chat" },
