@@ -161,7 +161,7 @@ export default function Arquivos() {
       file_size: pendingFile.size,
       folder: newFolder || "Geral",
       tags: newTags ? newTags.split(",").map((t) => t.trim()) : [],
-      project_id: selectedProject || null,
+      project_id: selectedProject && selectedProject !== "none" ? selectedProject : null,
     });
 
     if (dbError) {
@@ -401,7 +401,7 @@ export default function Arquivos() {
                     <SelectValue placeholder="Selecione um projeto (opcional)" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="">Nenhum</SelectItem>
+                    <SelectItem value="none">Nenhum</SelectItem>
                     {projects.map((project) => (
                       <SelectItem key={project.id} value={project.id}>
                         {project.name}
