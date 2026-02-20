@@ -124,7 +124,7 @@ export function AppointmentDialog({
       appointment_date: data.appointment_date,
       start_time: data.start_time,
       end_time: data.end_time || null,
-      reminder_minutes: data.reminder_minutes ? parseInt(data.reminder_minutes) : null,
+      reminder_minutes: data.reminder_minutes && data.reminder_minutes !== "0" ? parseInt(data.reminder_minutes) : null,
       location: data.location || null,
       notes: data.notes || null,
     };
@@ -264,7 +264,7 @@ export function AppointmentDialog({
                         </SelectTrigger>
                       </FormControl>
                       <SelectContent>
-                        <SelectItem value="">Sem lembrete</SelectItem>
+                        <SelectItem value="0">Sem lembrete</SelectItem>
                         <SelectItem value="5">5 minutos antes</SelectItem>
                         <SelectItem value="15">15 minutos antes</SelectItem>
                         <SelectItem value="30">30 minutos antes</SelectItem>

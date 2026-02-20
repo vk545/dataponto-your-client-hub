@@ -1,6 +1,8 @@
 import { AppSidebar } from "./AppSidebar";
 import { ReactNode } from "react";
 import { useIsMobile } from "@/hooks/use-mobile";
+import { useNotifications } from "@/hooks/useNotifications";
+import { useAuth } from "@/hooks/useAuth";
 
 interface AppLayoutProps {
   children: ReactNode;
@@ -8,6 +10,9 @@ interface AppLayoutProps {
 
 export function AppLayout({ children }: AppLayoutProps) {
   const isMobile = useIsMobile();
+  const { user } = useAuth();
+
+  useNotifications({ userId: user?.id, enabled: !!user });
 
   return (
     <div className="min-h-screen bg-background">
